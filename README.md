@@ -11,7 +11,7 @@
 ![Platform](https://img.shields.io/badge/Platform-Wear%20OS-important)
 [![Min API](https://img.shields.io/badge/API-30%2B-brightgreen)](https://developer.android.com/about/versions/11)
 
-*赋予您的手表一个简约的“第二面”。*
+*为您的摸鱼作保障。*
 
 </div>
 
