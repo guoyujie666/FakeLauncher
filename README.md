@@ -1,11 +1,13 @@
-![FakeLauncher Logo](ic_launcher_round.png)
-# FakeLauncher ⌚️
+
+
 <div align="center">
 
+![FakeLauncher Logo](ic_launcher_round.png)
+# FakeLauncher ⌚️
 **一款将 Wear OS 智能手表伪装为轻智能手表的应用程序。**
 
 [![Kotlin Version](https://img.shields.io/badge/Kotlin-1.9.0-blueviolet?logo=kotlin)](https://kotlinlang.org)
-[![License](https://img.shields.io/badge/License-Apache%202.0-green.svg)](LICENSE)
+[![License](https://img.shields.io/badge/MIT-Licence-green.svg)](LICENSE)
 ![Platform](https://img.shields.io/badge/Platform-Wear%20OS-important)
 [![Min API](https://img.shields.io/badge/API-30%2B-brightgreen)](https://developer.android.com/about/versions/11)
 
@@ -19,13 +21,6 @@
 
 > **请注意**：本项目为技术演示与概念验证，旨在探索 Wear OS 的界面定制能力与系统交互边界。请遵守您所在地的法律法规以及设备的使用条款。
 
-## 📸 界面预览
-
-| 简约表盘界面 | 基础应用抽屉 |
-| :---: | :---: |
-| *（表盘截图）* | *（应用列表截图）* |
-
-*提示：请将您的项目截图放入 `docs/screenshots/` 目录，并替换上方描述。*
 
 ## 🚀 主要特性
 
@@ -65,20 +60,6 @@
 ### 权限授予
 首次运行，应用会引导您开启 **“悬浮窗权限”**。这是应用覆盖系统界面所必需的。请务必在系统设置中允许此权限。
 
-## 📁 项目结构
-FakeLauncher/
-├── app/src/main/
-│ ├── kotlin/com/guoyujie666/fakelauncher/
-│ │ ├── MainActivity.kt # 主入口，权限申请与窗口管理
-│ │ ├── WearApp.kt # 核心 Compose UI 定义
-│ │ ├── FloatingWindowManager.kt # 悬浮窗控制逻辑
-│ │ └── ... (其他组件)
-│ ├── res/ # 资源文件（图标、布局等）
-│ └── AndroidManifest.xml
-├── docs/ # 文档与截图
-├── src/icon.png # 项目图标
-└── README.md # 本文件
-
 ## 🤝 参与贡献
 
 我们欢迎并感谢所有的贡献！请随时通过以下方式参与：
@@ -94,7 +75,7 @@ FakeLauncher/
 
 ## 📄 许可证
 
-本项目采用 **Apache License 2.0** 许可证。
+本项目采用 **MIT License** 许可证。
 详情请参阅 [LICENSE](LICENSE) 文件。
 
 ---
