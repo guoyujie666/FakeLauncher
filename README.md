@@ -1,4 +1,4 @@
-![FakeLauncher Logo](src/icon.png)
+![FakeLauncher Logo](ic_launcher_round.png)
 # FakeLauncher ⌚️
 <div align="center">
 
