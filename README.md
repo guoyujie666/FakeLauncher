@@ -6,7 +6,7 @@
 # FakeLauncher ⌚️
 **一款将 Wear OS 智能手表伪装为轻智能手表的应用程序。**
 
-[![Kotlin Version](https://img.shields.io/badge/Kotlin-1.9.0-blueviolet?logo=kotlin)](https://kotlinlang.org)
+[![Kotlin Version](https://img.shields.io/badge/Kotlin-2.1.0-blueviolet?logo=kotlin)](https://kotlinlang.org)
 [![License](https://img.shields.io/badge/MIT-Licence-green.svg)](LICENSE)
 ![Platform](https://img.shields.io/badge/Platform-Wear%20OS-important)
 [![Min API](https://img.shields.io/badge/API-30%2B-brightgreen)](https://developer.android.com/about/versions/11)
