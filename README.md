@@ -11,7 +11,7 @@
 ![Platform](https://img.shields.io/badge/Platform-Wear%20OS-important)
 [![Min API](https://img.shields.io/badge/API-30%2B-brightgreen)](https://developer.android.com/about/versions/11)
 
-*为您的摸鱼作保障。*
+*为您摸鱼作保障。*
 
 </div>
 
