@@ -14,8 +14,8 @@ android {
         applicationId = "com.github.guoyujie666.fakelauncher"
         minSdk = 30
         targetSdk = 34
-        versionCode = 25122022
-        versionName = "v1.0.1"
+        versionCode = 25122023
+        versionName = "v1.0.2"
     }
 
     kotlinOptions {
@@ -23,12 +23,12 @@ android {
     }
     buildTypes {
         getByName("release") {
-            versionNameSuffix = "release"
+            versionNameSuffix = "-release"
             isShrinkResources = true
             isMinifyEnabled = true
         }
         getByName("debug") {
-            versionNameSuffix = "debug"
+            versionNameSuffix = "-debug"
         }
     }
     kotlin {
@@ -38,6 +38,8 @@ android {
 
 dependencies {
     // Wear OS Material 3
+    implementation("androidx.palette:palette-ktx:1.0.0")
+    implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("androidx.wear.compose:compose-material3:1.5.6")
     implementation("androidx.wear.compose:compose-foundation:1.5.6")
 
