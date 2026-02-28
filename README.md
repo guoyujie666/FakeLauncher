@@ -52,7 +52,7 @@
 ### 安装与运行
 1.  **克隆仓库**
     ```bash
-    git clone https://github.com/your-username/FakeLauncher.git
+    git clone https://github.com/guoyujie666/FakeLauncher.git
     cd FakeLauncher
     ```
 2.  **用 Android Studio 打开项目**
