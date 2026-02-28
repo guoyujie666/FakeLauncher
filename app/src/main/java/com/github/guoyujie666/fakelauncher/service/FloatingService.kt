@@ -1074,7 +1074,7 @@ fun DisplaySettingsPage(brightness: Float, onBrightnessChange: (Float) -> Unit, 
             Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp, start = 8.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text("息屏显示", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
-                    Text("耗电", style = MaterialTheme.typography.labelSmall, color = Color.DarkGray)
+                    Text("开启后续航时间变短", style = MaterialTheme.typography.labelSmall, color = Color.DarkGray)
                 }
                 Icon(imageVector = Icons.Default.ToggleOff, contentDescription = null, tint = Color.DarkGray)
             }
