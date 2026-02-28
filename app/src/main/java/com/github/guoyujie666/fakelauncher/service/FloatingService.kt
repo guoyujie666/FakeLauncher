@@ -52,7 +52,9 @@ import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.palette.graphics.Palette
 import androidx.savedstate.*
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
+import androidx.wear.compose.foundation.SwipeToDismissValue
 import androidx.wear.compose.foundation.lazy.*
+import androidx.wear.compose.foundation.rememberSwipeToDismissBoxState
 import androidx.wear.compose.material3.*
 import coil.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
@@ -186,12 +188,16 @@ fun FakeLauncherServiceMainUI(
     var currentSettingsScreen by remember { mutableStateOf<SettingsDestination?>(null) }
     var isPowerSaveMode by remember { mutableStateOf(prefs.getBoolean("is_power_save", false)) }
 
+    // 假应用内部的二级状态，用于控制返回逻辑
+    var isManualTimerSetting by remember { mutableStateOf(false) }
+    var isAddingAlarm by remember { mutableStateOf(false) }
+
     // 假关机与重启状态
     var isFakePowerOff by remember { mutableStateOf(false) }
     var isFakeRestarting by remember { mutableStateOf(false) }
     var isPressingForPowerOn by remember { mutableStateOf(false) }
     
-    // 开机文字（每次开机或重启逻辑触发时从Prefs读取）
+    // 开机文字
     var bootTextMain by remember { mutableStateOf("Xiaomi") }
     var bootTextSub by remember { mutableStateOf("HyperOS") }
 
@@ -210,6 +216,9 @@ fun FakeLauncherServiceMainUI(
     var ringingAlarm by remember { mutableStateOf<Alarm?>(null) }
     var ringtone by remember { mutableStateOf<Ringtone?>(null) }
     var lastFiredMinute by remember { mutableIntStateOf(-1) }
+
+    // 控制应用退出动画是否包含淡出
+    var shouldFadeOutOnAppExit by remember { mutableStateOf(true) }
 
     // 重启逻辑
     LaunchedEffect(isFakeRestarting) {
@@ -328,204 +337,250 @@ fun FakeLauncherServiceMainUI(
         }
     }
 
-    var accumulatedDelta by remember { mutableFloatStateOf(0f) }
-    val scrollThreshold = 50f
+    // 统一的应用内返回处理函数
+    fun handleAppBack() {
+        when (currentApp) {
+            AppDestination.SETTINGS -> {
+                if (currentSettingsScreen != null && currentSettingsScreen != SettingsDestination.MENU) {
+                    currentSettingsScreen = SettingsDestination.MENU
+                } else {
+                    currentApp = AppDestination.NONE
+                    currentSettingsScreen = null
+                }
+            }
+            AppDestination.TIMER -> {
+                if (isManualTimerSetting) isManualTimerSetting = false
+                else currentApp = AppDestination.NONE
+            }
+            AppDestination.ALARM -> {
+                if (isAddingAlarm) isAddingAlarm = false
+                else currentApp = AppDestination.NONE
+            }
+            else -> currentApp = AppDestination.NONE
+        }
+    }
+
+    // 当有应用进入时，重置退出动画的淡出效果为开启状态
+    LaunchedEffect(currentApp) {
+        if (currentApp != AppDestination.NONE) {
+            shouldFadeOutOnAppExit = true
+        }
+    }
 
     LaunchedEffect(homeEventFlow) {
         homeEventFlow.collect {
-            if (currentApp == AppDestination.SETTINGS && currentSettingsScreen != null) {
-                currentSettingsScreen = null
-            } else if (currentApp != AppDestination.NONE) {
+            if (currentApp != AppDestination.NONE) {
                 currentApp = AppDestination.NONE
+                currentSettingsScreen = null
+                isManualTimerSetting = false
+                isAddingAlarm = false
             } else if (pagerState.currentPage != 1) {
                 pagerState.animateScrollToPage(1)
             }
         }
     }
 
+    var accumulatedDelta by remember { mutableFloatStateOf(0f) }
+    val scrollThreshold = 50f
+
     MaterialTheme {
         AppScaffold {
-            ScreenScaffold(
-                timeText = { if (currentApp == AppDestination.NONE) TimeText() }
-            ) {
-                Box(modifier = Modifier.fillMaxSize()) {
-                    VerticalPager(
-                        state = pagerState,
-                        userScrollEnabled = currentApp == AppDestination.NONE,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(Color.Black)
-                            .focusRequester(focusRequester)
-                            .focusable()
-                            .onRotaryScrollEvent { event ->
-                                if (currentApp == AppDestination.NONE) {
-                                    val delta = event.verticalScrollPixels
-                                    accumulatedDelta += delta
-                                    if (!pagerState.isScrollInProgress) {
-                                        if (abs(accumulatedDelta) > scrollThreshold) {
-                                            val direction = if (accumulatedDelta > 0) 1 else -1
-                                            val targetPage = (pagerState.currentPage + direction).coerceIn(0, 2)
-                                            if (targetPage != pagerState.currentPage) {
-                                                coroutineScope.launch {
-                                                    pagerState.animateScrollToPage(targetPage)
-                                                }
+            Box(modifier = Modifier.fillMaxSize()) {
+                VerticalPager(
+                    state = pagerState,
+                    userScrollEnabled = currentApp == AppDestination.NONE,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black)
+                        .focusRequester(focusRequester)
+                        .focusable()
+                        .onRotaryScrollEvent { event ->
+                            if (currentApp == AppDestination.NONE) {
+                                val delta = event.verticalScrollPixels
+                                accumulatedDelta += delta
+                                if (!pagerState.isScrollInProgress) {
+                                    if (abs(accumulatedDelta) > scrollThreshold) {
+                                        val direction = if (accumulatedDelta > 0) 1 else -1
+                                        val targetPage = (pagerState.currentPage + direction).coerceIn(0, 2)
+                                        if (targetPage != pagerState.currentPage) {
+                                            coroutineScope.launch {
+                                                pagerState.animateScrollToPage(targetPage)
                                             }
-                                            accumulatedDelta = 0f
                                         }
+                                        accumulatedDelta = 0f
                                     }
-                                } else {
-                                    accumulatedDelta = 0f
                                 }
-                                true
+                            } else {
+                                accumulatedDelta = 0f
                             }
-                    ) { page ->
-                        Box(modifier = Modifier.fillMaxSize()) {
-                            if (bgMode == 1 && bgPath != null) {
-                                val file = File(bgPath)
-                                if (file.exists()) {
-                                    AsyncImage(
-                                        model = file,
-                                        contentDescription = null,
-                                        modifier = Modifier.fillMaxSize(),
-                                        contentScale = ContentScale.Crop
-                                    )
-                                }
+                            true
+                        }
+                ) { page ->
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        if (bgMode == 1 && bgPath != null) {
+                            val file = File(bgPath)
+                            if (file.exists()) {
+                                AsyncImage(
+                                    model = file,
+                                    contentDescription = null,
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentScale = ContentScale.Crop
+                                )
                             }
+                        }
 
-                            when (page) {
-                                0 -> ControlCenterFloatingPage(
+                        when (page) {
+                            0 -> ScreenScaffold(timeText = { TimeText() }) {
+                                ControlCenterFloatingPage(
                                     brightness = sharedBrightness,
                                     onBrightnessChange = { sharedBrightness = it },
                                     textColor = adaptiveColor
                                 )
-                                1 -> WatchFaceFloatingPage(
-                                    onClose = onClose,
-                                    customBgPath = if (bgMode == 0) bgPath else null,
-                                    textColor = adaptiveColor,
-                                    isStopwatchRunning = isStopwatchRunning,
-                                    stopwatchTime = stopwatchTimeMillis,
-                                    isTimerRunning = isTimerRunning,
-                                    timerTime = timerRemainingMillis,
-                                    onIslandClick = { 
-                                        if (isTimerRunning) currentApp = AppDestination.TIMER
-                                        else if (isStopwatchRunning) currentApp = AppDestination.STOPWATCH 
-                                    }
+                            }
+                            1 -> WatchFaceFloatingPage(
+                                onClose = onClose,
+                                customBgPath = if (bgMode == 0) bgPath else null,
+                                textColor = adaptiveColor,
+                                isStopwatchRunning = isStopwatchRunning,
+                                stopwatchTime = stopwatchTimeMillis,
+                                isTimerRunning = isTimerRunning,
+                                timerTime = timerRemainingMillis,
+                                onIslandClick = { 
+                                    if (isTimerRunning) currentApp = AppDestination.TIMER
+                                    else if (isStopwatchRunning) currentApp = AppDestination.STOPWATCH 
+                                }
+                            )
+                            2 -> AppDrawerFloatingPage(onAppClick = { currentApp = it })
+                        }
+                    }
+                }
+
+                // --- 全局应用覆盖层 ---
+                AnimatedVisibility(
+                    visible = currentApp != AppDestination.NONE,
+                    enter = slideInVertically { it } + fadeIn(),
+                    exit = slideOutVertically { it } + if (shouldFadeOutOnAppExit) fadeOut() else ExitTransition.None
+                ) {
+                    val swipeState = rememberSwipeToDismissBoxState()
+                    LaunchedEffect(swipeState.currentValue) {
+                        if (swipeState.currentValue == SwipeToDismissValue.Dismissed) {
+                            shouldFadeOutOnAppExit = false // Disable fade out for swipe dismiss
+                            handleAppBack()
+                            swipeState.snapTo(SwipeToDismissValue.Default)
+                        }
+                    }
+
+                    SwipeToDismissBox(
+                        state = swipeState,
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        ScreenScaffold(timeText = { TimeText() }) {
+                            when (currentApp) {
+                                AppDestination.SETTINGS -> SettingsApp(
+                                    currentScreen = currentSettingsScreen ?: SettingsDestination.MENU,
+                                    onNavigate = { currentSettingsScreen = it },
+                                    onBack = { handleAppBack() },
+                                    brightness = sharedBrightness,
+                                    onBrightnessChange = { sharedBrightness = it },
+                                    isPowerSaveMode = isPowerSaveMode,
+                                    onPowerSaveModeChange = { 
+                                        isPowerSaveMode = it
+                                        prefs.edit { putBoolean("is_power_save", it) }
+                                    },
+                                    onFakePowerOff = { isFakePowerOff = true },
+                                    onFakeRestart = { isFakeRestarting = true }
                                 )
-                                2 -> AppDrawerFloatingPage(onAppClick = { currentApp = it })
+                                AppDestination.HEART_RATE -> HeartRateApp(
+                                    isPowerSaveMode = isPowerSaveMode,
+                                    onBack = { handleAppBack() }
+                                )
+                                AppDestination.EXERCISE -> ExerciseApp(
+                                    onBack = { handleAppBack() }
+                                )
+                                AppDestination.STOPWATCH -> StopwatchApp(
+                                    isRunning = isStopwatchRunning,
+                                    timeMillis = stopwatchTimeMillis,
+                                    laps = stopwatchLaps,
+                                    onToggleRunning = { isStopwatchRunning = !isStopwatchRunning },
+                                    onAddLap = { stopwatchLaps = listOf(stopwatchTimeMillis) + stopwatchLaps },
+                                    onReset = { stopwatchTimeMillis = 0L; stopwatchLaps = emptyList() },
+                                    onBack = { handleAppBack() }
+                                )
+                                AppDestination.TIMER -> TimerApp(
+                                    isRunning = isTimerRunning,
+                                    remainingMillis = timerRemainingMillis,
+                                    initialMillis = timerInitialMillis,
+                                    isManualSetting = isManualTimerSetting,
+                                    onManualSettingChange = { isManualTimerSetting = it },
+                                    onStart = { duration -> 
+                                        timerInitialMillis = duration
+                                        timerRemainingMillis = duration
+                                        isTimerRunning = true
+                                    },
+                                    onToggleRunning = { isTimerRunning = !isTimerRunning },
+                                    onReset = { isTimerRunning = false; timerRemainingMillis = 0L },
+                                    onBack = { handleAppBack() }
+                                )
+                                AppDestination.ALARM -> AlarmApp(
+                                    alarms = alarms,
+                                    isAdding = isAddingAlarm,
+                                    onAddingChange = { isAddingAlarm = it },
+                                    onAdd = { h, m -> alarms = alarms + Alarm(hour = h, minute = m) },
+                                    onToggle = { alarm -> 
+                                        alarms = alarms.map { if (it.id == alarm.id) it.copy(isEnabled = !it.isEnabled) else it } 
+                                    },
+                                    onDelete = { alarm -> alarms = alarms.filter { it.id != alarm.id } },
+                                    onBack = { handleAppBack() }
+                                )
+                                else -> {}
                             }
                         }
                     }
+                }
 
-                    // --- 全局应用覆盖层 ---
-                    AnimatedVisibility(
-                        visible = currentApp != AppDestination.NONE,
-                        enter = slideInVertically { it } + fadeIn(),
-                        exit = slideOutVertically { it } + fadeOut()
-                    ) {
-                        when (currentApp) {
-                            AppDestination.SETTINGS -> SettingsApp(
-                                currentScreen = currentSettingsScreen ?: SettingsDestination.MENU,
-                                onNavigate = { currentSettingsScreen = it },
-                                onBack = { 
-                                    if (currentSettingsScreen == SettingsDestination.MENU) currentApp = AppDestination.NONE
-                                    else currentSettingsScreen = SettingsDestination.MENU
-                                },
-                                brightness = sharedBrightness,
-                                onBrightnessChange = { sharedBrightness = it },
-                                isPowerSaveMode = isPowerSaveMode,
-                                onPowerSaveModeChange = { 
-                                    isPowerSaveMode = it
-                                    prefs.edit { putBoolean("is_power_save", it) }
-                                },
-                                onFakePowerOff = { isFakePowerOff = true },
-                                onFakeRestart = { isFakeRestarting = true }
-                            )
-                            AppDestination.HEART_RATE -> HeartRateApp(
-                                isPowerSaveMode = isPowerSaveMode,
-                                onBack = { currentApp = AppDestination.NONE }
-                            )
-                            AppDestination.EXERCISE -> ExerciseApp(
-                                onBack = { currentApp = AppDestination.NONE }
-                            )
-                            AppDestination.STOPWATCH -> StopwatchApp(
-                                isRunning = isStopwatchRunning,
-                                timeMillis = stopwatchTimeMillis,
-                                laps = stopwatchLaps,
-                                onToggleRunning = { isStopwatchRunning = !isStopwatchRunning },
-                                onAddLap = { stopwatchLaps = listOf(stopwatchTimeMillis) + stopwatchLaps },
-                                onReset = { stopwatchTimeMillis = 0L; stopwatchLaps = emptyList() },
-                                onBack = { currentApp = AppDestination.NONE }
-                            )
-                            AppDestination.TIMER -> TimerApp(
-                                isRunning = isTimerRunning,
-                                remainingMillis = timerRemainingMillis,
-                                initialMillis = timerInitialMillis,
-                                onStart = { duration -> 
-                                    timerInitialMillis = duration
-                                    timerRemainingMillis = duration
-                                    isTimerRunning = true
-                                },
-                                onToggleRunning = { isTimerRunning = !isTimerRunning },
-                                onReset = { isTimerRunning = false; timerRemainingMillis = 0L },
-                                onBack = { currentApp = AppDestination.NONE }
-                            )
-                            AppDestination.ALARM -> AlarmApp(
-                                alarms = alarms,
-                                onAdd = { h, m -> alarms = alarms + Alarm(hour = h, minute = m) },
-                                onToggle = { alarm -> 
-                                    alarms = alarms.map { if (it.id == alarm.id) it.copy(isEnabled = !it.isEnabled) else it } 
-                                },
-                                onDelete = { alarm -> alarms = alarms.filter { it.id != alarm.id } },
-                                onBack = { currentApp = AppDestination.NONE }
-                            )
-                            else -> {}
+                // --- 闹钟响铃全屏覆盖 ---
+                AnimatedVisibility(
+                    visible = ringingAlarm != null,
+                    enter = fadeIn() + scaleIn(),
+                    exit = fadeOut() + scaleOut()
+                ) {
+                    Box(modifier = Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(Icons.Default.Alarm, contentDescription = null, modifier = Modifier.size(64.dp), tint = Color(0xFFF44336))
+                            Spacer(Modifier.height(16.dp))
+                            Text("闹钟响了", style = MaterialTheme.typography.titleLarge)
+                            Text(String.format(Locale.getDefault(), "%02d:%02d", ringingAlarm?.hour ?: 0, ringingAlarm?.minute ?: 0), style = MaterialTheme.typography.displayMedium)
+                            Spacer(Modifier.height(32.dp))
+                            Button(onClick = { ringingAlarm = null }, colors = ButtonDefaults.buttonColors(containerColor = Color.Red)) {
+                                Text("停止响铃")
+                            }
                         }
                     }
+                }
 
-                    // --- 闹钟响铃全屏覆盖 ---
-                    AnimatedVisibility(
-                        visible = ringingAlarm != null,
-                        enter = fadeIn() + scaleIn(),
-                        exit = fadeOut() + scaleOut()
+                // --- 假关机与重启全屏覆盖层 ---
+                if (isFakePowerOff || isFakeRestarting) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.Black)
+                            .pointerInput(Unit) {
+                                if (isFakePowerOff) {
+                                    detectTapGestures(
+                                        onPress = {
+                                            isPressingForPowerOn = true
+                                            try { awaitRelease() } finally { isPressingForPowerOn = false }
+                                        }
+                                    )
+                                }
+                            },
+                        contentAlignment = Alignment.Center
                     ) {
-                        Box(modifier = Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
+                        if (isFakeRestarting) {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Icon(Icons.Default.Alarm, contentDescription = null, modifier = Modifier.size(64.dp), tint = Color(0xFFF44336))
-                                Spacer(Modifier.height(16.dp))
-                                Text("闹钟响了", style = MaterialTheme.typography.titleLarge)
-                                Text(String.format("%02d:%02d", ringingAlarm?.hour ?: 0, ringingAlarm?.minute ?: 0), style = MaterialTheme.typography.displayMedium)
-                                Spacer(Modifier.height(32.dp))
-                                Button(onClick = { ringingAlarm = null }, colors = ButtonDefaults.buttonColors(containerColor = Color.Red)) {
-                                    Text("停止响铃")
-                                }
-                            }
-                        }
-                    }
-
-                    // --- 假关机与重启全屏覆盖层 ---
-                    if (isFakePowerOff || isFakeRestarting) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .background(Color.Black)
-                                .pointerInput(Unit) {
-                                    if (isFakePowerOff) {
-                                        detectTapGestures(
-                                            onPress = {
-                                                isPressingForPowerOn = true
-                                                try { awaitRelease() } finally { isPressingForPowerOn = false }
-                                            }
-                                        )
-                                    }
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            if (isFakeRestarting) {
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Text(bootTextMain, color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold)
-                                    Spacer(Modifier.height(8.dp))
-                                    Text(bootTextSub, color = Color.Gray, fontSize = 14.sp)
-                                }
+                                Text(bootTextMain, color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold)
+                                Spacer(Modifier.height(8.dp))
+                                Text(bootTextSub, color = Color.Gray, fontSize = 14.sp)
                             }
                         }
                     }
@@ -560,6 +615,8 @@ fun TimerApp(
     isRunning: Boolean,
     remainingMillis: Long,
     initialMillis: Long,
+    isManualSetting: Boolean,
+    onManualSettingChange: (Boolean) -> Unit,
     onStart: (Long) -> Unit,
     onToggleRunning: () -> Unit,
     onReset: () -> Unit,
@@ -570,7 +627,6 @@ fun TimerApp(
         "5分钟" to 300000L, "10分钟" to 600000L,
         "30分钟" to 1800000L, "1小时" to 3600000L
     )
-    var isManualSetting by remember { mutableStateOf(false) }
     val listState = rememberScalingLazyListState()
 
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
@@ -606,9 +662,9 @@ fun TimerApp(
             ManualTimerPicker(
                 onConfirm = { duration -> 
                     onStart(duration)
-                    isManualSetting = false
+                    onManualSettingChange(false)
                 },
-                onCancel = { isManualSetting = false }
+                onCancel = { onManualSettingChange(false) }
             )
         } else {
             ScalingLazyColumn(
@@ -624,7 +680,7 @@ fun TimerApp(
                 }
                 item {
                     Button(
-                        onClick = { isManualSetting = true },
+                        onClick = { onManualSettingChange(true) },
                         modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                         colors = ButtonDefaults.filledTonalButtonColors()
                     ) {
@@ -732,19 +788,20 @@ fun ManualTimerPicker(onConfirm: (Long) -> Unit, onCancel: () -> Unit) {
 @Composable
 fun AlarmApp(
     alarms: List<Alarm>,
+    isAdding: Boolean,
+    onAddingChange: (Boolean) -> Unit,
     onAdd: (Int, Int) -> Unit,
     onToggle: (Alarm) -> Unit,
     onDelete: (Alarm) -> Unit,
     onBack: () -> Unit
 ) {
-    var isAdding by remember { mutableStateOf(false) }
     val listState = rememberScalingLazyListState()
 
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         if (isAdding) {
             ManualAlarmPicker(
-                onConfirm = { h, m -> onAdd(h, m); isAdding = false },
-                onCancel = { isAdding = false }
+                onConfirm = { h, m -> onAdd(h, m); onAddingChange(false) },
+                onCancel = { onAddingChange(false) }
             )
         } else {
             ScalingLazyColumn(
@@ -760,7 +817,7 @@ fun AlarmApp(
                         colors = if (alarm.isEnabled) ButtonDefaults.buttonColors() else ButtonDefaults.filledTonalButtonColors()
                     ) {
                         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text(String.format("%02d:%02d", alarm.hour, alarm.minute), style = MaterialTheme.typography.titleMedium)
+                            Text(String.format(Locale.getDefault(), "%02d:%02d", alarm.hour, alarm.minute), style = MaterialTheme.typography.titleMedium)
                             IconButton(onClick = { onDelete(alarm) }, modifier = Modifier.size(24.dp)) {
                                 Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
                             }
@@ -768,7 +825,7 @@ fun AlarmApp(
                     }
                 }
                 item {
-                    Button(onClick = { isAdding = true }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                    Button(onClick = { onAddingChange(true) }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Default.Add, contentDescription = null)
                             Spacer(Modifier.width(8.dp))
@@ -887,9 +944,9 @@ fun ExerciseApp(onBack: () -> Unit) {
                         Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(20.dp))
                         Spacer(Modifier.width(12.dp))
                         Text("添加运动")
+                        }
                     }
                 }
-            }
             item { Button(onClick = onBack, modifier = Modifier.padding(top = 12.dp).fillMaxWidth(), colors = ButtonDefaults.filledTonalButtonColors()) { Text("返回") } }
         }
         CustomToast(message = toastMessage, onDismiss = { toastMessage = null })
@@ -970,7 +1027,7 @@ fun SettingsApp(
             SettingsDestination.SYSTEM_OPS -> SystemOpsPage(
                 onPowerOff = onFakePowerOff,
                 onRestart = onFakeRestart,
-                onBack = { onNavigate(SettingsDestination.MENU) }
+                onBack = { onBack() }
             )
         }
     }
@@ -1008,10 +1065,8 @@ fun DisplaySettingsPage(brightness: Float, onBrightnessChange: (Float) -> Unit, 
         item {
             Column(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
                 Text("亮度: ${brightness.toInt()}", style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(start = 8.dp))
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceEvenly) {
-                    IconButton(onClick = { if (brightness > 0) onBrightnessChange(brightness - 1) }) { Icon(Icons.Default.Remove, contentDescription = null) }
-                    Slider(value = brightness, onValueChange = onBrightnessChange, valueRange = 0f..10f, steps = 9, modifier = Modifier.weight(1f))
-                    IconButton(onClick = { if (brightness < 10) onBrightnessChange(brightness + 1) }) { Icon(Icons.Default.Add, contentDescription = null) }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+                    Slider(value = brightness, onValueChange = onBrightnessChange, valueRange = 0f..10f, steps = 9, modifier = Modifier.fillMaxWidth())
                 }
             }
         }
@@ -1019,7 +1074,7 @@ fun DisplaySettingsPage(brightness: Float, onBrightnessChange: (Float) -> Unit, 
             Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp, start = 8.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text("息屏显示", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
-                    Text("始终保持屏幕开启", style = MaterialTheme.typography.labelSmall, color = Color.DarkGray)
+                    Text("耗电", style = MaterialTheme.typography.labelSmall, color = Color.DarkGray)
                 }
                 Icon(imageVector = Icons.Default.ToggleOff, contentDescription = null, tint = Color.DarkGray)
             }

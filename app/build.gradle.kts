@@ -14,8 +14,8 @@ android {
         applicationId = "com.github.guoyujie666.fakelauncher"
         minSdk = 30
         targetSdk = 34
-        versionCode = 25122023
-        versionName = "v1.0.2"
+        versionCode = 26022823
+        versionName = "v1.1.1"
     }
 
     kotlinOptions {
@@ -35,6 +35,8 @@ android {
         jvmToolchain(17)
     }
 }
+
+
 
 dependencies {
     // Wear OS Material 3

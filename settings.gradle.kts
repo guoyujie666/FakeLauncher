@@ -9,6 +9,10 @@ pluginManagement {
         }
         mavenCentral()
         gradlePluginPortal()
+
+        maven("https://jitpack.io")
+        maven("https://maven.aliyun.com/repository/public" ) // 加上这行
+
     }
 }
 dependencyResolutionManagement {

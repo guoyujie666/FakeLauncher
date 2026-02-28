@@ -78,7 +78,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun requestPermission() {
-        val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
+        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
             data = Uri.fromParts("package", packageName, null)
         }
         overlayPermissionLauncher.launch(intent)
@@ -618,7 +618,7 @@ fun AboutScreen() {
                 Text(text = "FakeLauncher", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp))
             }
             item {
-                Text(text = "v1.0.4", style = MaterialTheme.typography.labelSmall)
+                Text(text = "v1.1.1", style = MaterialTheme.typography.labelSmall)
             }
             item {
                 Text(text = "by guoyujie666", style = MaterialTheme.typography.labelSmall)
