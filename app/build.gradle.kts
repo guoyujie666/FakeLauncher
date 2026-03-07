@@ -12,10 +12,10 @@ android {
     }
     defaultConfig {
         applicationId = "com.github.guoyujie666.fakelauncher"
-        minSdk = 30
+        minSdk = 28
         targetSdk = 34
-        versionCode = 26022823
-        versionName = "v1.1.1"
+        versionCode = 26030707
+        versionName = "v1.2.0"
     }
 
     kotlinOptions {
@@ -29,6 +29,7 @@ android {
         }
         getByName("debug") {
             versionNameSuffix = "-debug"
+            applicationIdSuffix = ".debug"
         }
     }
     kotlin {
@@ -55,7 +56,7 @@ dependencies {
     implementation(libs.ui.tooling.preview)
     implementation(libs.activity.compose)
     implementation("androidx.compose.foundation:foundation:1.7.8")
-    implementation("androidx.compose.material3:material3:1.4.0")
+    implementation("androidx.compose.material3:material3:1.5.0-alpha15")
 
     // Lifecycle & SavedState (Explicit versions to ensure ViewTree owners are present)
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")

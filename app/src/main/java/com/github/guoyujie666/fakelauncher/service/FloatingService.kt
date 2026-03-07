@@ -4,6 +4,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.SharedPreferences
 import android.graphics.BitmapFactory
 import android.graphics.PixelFormat
 import android.media.Ringtone
@@ -16,6 +17,7 @@ import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.compose.animation.*
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -31,6 +33,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
@@ -68,6 +71,7 @@ import java.text.SimpleDateFormat
 import java.util.*
 import kotlin.math.abs
 import kotlin.random.Random
+import androidx.compose.ui.platform.LocalLocale
 
 class FloatingService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStateRegistryOwner {
 
@@ -304,13 +308,30 @@ fun FakeLauncherServiceMainUI(
         }
     }
 
-    val bgPath = remember { prefs.getString("bg_path", null) }
-    val bgMode = remember { prefs.getInt("bg_mode", 0) }
+    var bgEnabled by remember { mutableStateOf(prefs.getBoolean("bg_enabled", true)) }
+    var bgPath by remember { mutableStateOf(prefs.getString("bg_path", null)) }
+    var bgMode by remember { mutableIntStateOf(prefs.getInt("bg_mode", 0)) }
+    var bgBlurEnabled by remember { mutableStateOf(prefs.getBoolean("bg_blur", true)) }
+    var bgBlurAmount by remember { mutableFloatStateOf(prefs.getFloat("bg_blur_amount", 10f)) }
+
+    DisposableEffect(prefs) {
+        val listener = SharedPreferences.OnSharedPreferenceChangeListener { p, key ->
+            when (key) {
+                "bg_enabled" -> bgEnabled = p.getBoolean(key, true)
+                "bg_path" -> bgPath = p.getString(key, null)
+                "bg_mode" -> bgMode = p.getInt(key, 0)
+                "bg_blur" -> bgBlurEnabled = p.getBoolean(key, true)
+                "bg_blur_amount" -> bgBlurAmount = p.getFloat(key, 10f)
+            }
+        }
+        prefs.registerOnSharedPreferenceChangeListener(listener)
+        onDispose { prefs.unregisterOnSharedPreferenceChangeListener(listener) }
+    }
 
     var adaptiveColor by remember { mutableStateOf(Color.White) }
 
-    LaunchedEffect(bgPath) {
-        if (bgPath != null) {
+    LaunchedEffect(bgPath, bgEnabled) {
+        if (bgEnabled && bgPath != null) {
             withContext(Dispatchers.IO) {
                 try {
                     val file = File(bgPath)
@@ -338,7 +359,12 @@ fun FakeLauncherServiceMainUI(
     }
 
     // 统一的应用内返回处理函数
-    fun handleAppBack() {
+    fun handleAppBack(isGesture: Boolean = false) {
+        if (isGesture) {
+            // 如果是侧滑/手势返回，禁用淡出动画
+            shouldFadeOutOnAppExit = false
+        }
+
         when (currentApp) {
             AppDestination.SETTINGS -> {
                 if (currentSettingsScreen != null && currentSettingsScreen != SettingsDestination.MENU) {
@@ -356,6 +382,7 @@ fun FakeLauncherServiceMainUI(
                 if (isAddingAlarm) isAddingAlarm = false
                 else currentApp = AppDestination.NONE
             }
+            // 默认情况：如果是从应用主页直接退出
             else -> currentApp = AppDestination.NONE
         }
     }
@@ -401,7 +428,8 @@ fun FakeLauncherServiceMainUI(
                                 if (!pagerState.isScrollInProgress) {
                                     if (abs(accumulatedDelta) > scrollThreshold) {
                                         val direction = if (accumulatedDelta > 0) 1 else -1
-                                        val targetPage = (pagerState.currentPage + direction).coerceIn(0, 2)
+                                        val targetPage =
+                                            (pagerState.currentPage + direction).coerceIn(0, 2)
                                         if (targetPage != pagerState.currentPage) {
                                             coroutineScope.launch {
                                                 pagerState.animateScrollToPage(targetPage)
@@ -417,13 +445,20 @@ fun FakeLauncherServiceMainUI(
                         }
                 ) { page ->
                     Box(modifier = Modifier.fillMaxSize()) {
-                        if (bgMode == 1 && bgPath != null) {
+                        if (bgEnabled && bgMode == 1 && bgPath != null) {
                             val file = File(bgPath)
                             if (file.exists()) {
+                                // 逻辑修改：只有在控制中心(0)或应用抽屉(2)页面才应用固定模糊值
+                                val blurRadius = if (bgBlurEnabled && (page == 0 || page == 2)) {
+                                    bgBlurAmount.dp
+                                } else 0.dp
+
                                 AsyncImage(
                                     model = file,
                                     contentDescription = null,
-                                    modifier = Modifier.fillMaxSize(),
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .blur(blurRadius),
                                     contentScale = ContentScale.Crop
                                 )
                             }
@@ -434,12 +469,12 @@ fun FakeLauncherServiceMainUI(
                                 ControlCenterFloatingPage(
                                     brightness = sharedBrightness,
                                     onBrightnessChange = { sharedBrightness = it },
-                                    textColor = adaptiveColor
+                                    textColor = if (bgEnabled && bgMode == 1) adaptiveColor else Color.White
                                 )
                             }
                             1 -> WatchFaceFloatingPage(
                                 onClose = onClose,
-                                customBgPath = if (bgMode == 0) bgPath else null,
+                                customBgPath = if (bgEnabled && bgMode == 0) bgPath else null,
                                 textColor = adaptiveColor,
                                 isStopwatchRunning = isStopwatchRunning,
                                 stopwatchTime = stopwatchTimeMillis,
@@ -458,8 +493,12 @@ fun FakeLauncherServiceMainUI(
                 // --- 全局应用覆盖层 ---
                 AnimatedVisibility(
                     visible = currentApp != AppDestination.NONE,
-                    enter = slideInVertically { it } + fadeIn(),
-                    exit = slideOutVertically { it } + if (shouldFadeOutOnAppExit) fadeOut() else ExitTransition.None
+                    enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+                    exit = slideOutVertically(targetOffsetY = { it }) + if (shouldFadeOutOnAppExit) {
+                        fadeOut(animationSpec = tween(300)) // 只有非手势退出才播放淡出
+                    } else {
+                        ExitTransition.None // 手势返回时，只由 slideOut 控制，不叠加淡出
+                    }
                 ) {
                     val swipeState = rememberSwipeToDismissBoxState()
                     LaunchedEffect(swipeState.currentValue) {
@@ -479,7 +518,7 @@ fun FakeLauncherServiceMainUI(
                                 AppDestination.SETTINGS -> SettingsApp(
                                     currentScreen = currentSettingsScreen ?: SettingsDestination.MENU,
                                     onNavigate = { currentSettingsScreen = it },
-                                    onBack = { handleAppBack() },
+                                    onBack = { handleAppBack(isGesture = true) },
                                     brightness = sharedBrightness,
                                     onBrightnessChange = { sharedBrightness = it },
                                     isPowerSaveMode = isPowerSaveMode,
@@ -488,14 +527,14 @@ fun FakeLauncherServiceMainUI(
                                         prefs.edit { putBoolean("is_power_save", it) }
                                     },
                                     onFakePowerOff = { isFakePowerOff = true },
-                                    onFakeRestart = { isFakeRestarting = true }
+                                    onFakeRestart = { isFakeRestarting = true },
                                 )
                                 AppDestination.HEART_RATE -> HeartRateApp(
                                     isPowerSaveMode = isPowerSaveMode,
-                                    onBack = { handleAppBack() }
+                                    onBack = { handleAppBack(isGesture = true) }
                                 )
                                 AppDestination.EXERCISE -> ExerciseApp(
-                                    onBack = { handleAppBack() }
+                                    onBack = { handleAppBack(isGesture = true) }
                                 )
                                 AppDestination.STOPWATCH -> StopwatchApp(
                                     isRunning = isStopwatchRunning,
@@ -504,7 +543,7 @@ fun FakeLauncherServiceMainUI(
                                     onToggleRunning = { isStopwatchRunning = !isStopwatchRunning },
                                     onAddLap = { stopwatchLaps = listOf(stopwatchTimeMillis) + stopwatchLaps },
                                     onReset = { stopwatchTimeMillis = 0L; stopwatchLaps = emptyList() },
-                                    onBack = { handleAppBack() }
+                                    onBack = { handleAppBack(isGesture = true) }
                                 )
                                 AppDestination.TIMER -> TimerApp(
                                     isRunning = isTimerRunning,
@@ -519,7 +558,7 @@ fun FakeLauncherServiceMainUI(
                                     },
                                     onToggleRunning = { isTimerRunning = !isTimerRunning },
                                     onReset = { isTimerRunning = false; timerRemainingMillis = 0L },
-                                    onBack = { handleAppBack() }
+                                    onBack = { handleAppBack(isGesture = true) }
                                 )
                                 AppDestination.ALARM -> AlarmApp(
                                     alarms = alarms,
@@ -530,7 +569,7 @@ fun FakeLauncherServiceMainUI(
                                         alarms = alarms.map { if (it.id == alarm.id) it.copy(isEnabled = !it.isEnabled) else it } 
                                     },
                                     onDelete = { alarm -> alarms = alarms.filter { it.id != alarm.id } },
-                                    onBack = { handleAppBack() }
+                                    onBack = { handleAppBack(isGesture = true) }
                                 )
                                 else -> {}
                             }
@@ -544,12 +583,14 @@ fun FakeLauncherServiceMainUI(
                     enter = fadeIn() + scaleIn(),
                     exit = fadeOut() + scaleOut()
                 ) {
-                    Box(modifier = Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
+                    Box(modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black), contentAlignment = Alignment.Center) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Icon(Icons.Default.Alarm, contentDescription = null, modifier = Modifier.size(64.dp), tint = Color(0xFFF44336))
                             Spacer(Modifier.height(16.dp))
                             Text("闹钟响了", style = MaterialTheme.typography.titleLarge)
-                            Text(String.format(Locale.getDefault(), "%02d:%02d", ringingAlarm?.hour ?: 0, ringingAlarm?.minute ?: 0), style = MaterialTheme.typography.displayMedium)
+                            Text(String.format(LocalLocale.current.platformLocale, "%02d:%02d", ringingAlarm?.hour ?: 0, ringingAlarm?.minute ?: 0), style = MaterialTheme.typography.displayMedium)
                             Spacer(Modifier.height(32.dp))
                             Button(onClick = { ringingAlarm = null }, colors = ButtonDefaults.buttonColors(containerColor = Color.Red)) {
                                 Text("停止响铃")
@@ -569,7 +610,11 @@ fun FakeLauncherServiceMainUI(
                                     detectTapGestures(
                                         onPress = {
                                             isPressingForPowerOn = true
-                                            try { awaitRelease() } finally { isPressingForPowerOn = false }
+                                            try {
+                                                awaitRelease()
+                                            } finally {
+                                                isPressingForPowerOn = false
+                                            }
                                         }
                                     )
                                 }
@@ -629,7 +674,9 @@ fun TimerApp(
     )
     val listState = rememberScalingLazyListState()
 
-    Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+    Box(modifier = Modifier
+        .fillMaxSize()
+        .background(Color.Black)) {
         if (remainingMillis > 0 || isRunning) {
             Canvas(modifier = Modifier.fillMaxSize()) {
                 val progress = if (initialMillis > 0) remainingMillis.toFloat() / initialMillis else 0f
@@ -648,11 +695,15 @@ fun TimerApp(
             ) {
                 Text(formatTime(remainingMillis, false), style = MaterialTheme.typography.displayMedium.copy(fontSize = 42.sp))
                 Row(modifier = Modifier.padding(top = 20.dp)) {
-                    IconButton(onClick = onToggleRunning, modifier = Modifier.size(48.dp).background(Color.White.copy(alpha = 0.1f), CircleShape)) {
+                    IconButton(onClick = onToggleRunning, modifier = Modifier
+                        .size(48.dp)
+                        .background(Color.White.copy(alpha = 0.1f), CircleShape)) {
                         Icon(if (isRunning) Icons.Default.Pause else Icons.Default.PlayArrow, contentDescription = null)
                     }
                     Spacer(Modifier.width(16.dp))
-                    IconButton(onClick = { onReset() }, modifier = Modifier.size(48.dp).background(Color.White.copy(alpha = 0.1f), CircleShape)) {
+                    IconButton(onClick = { onReset() }, modifier = Modifier
+                        .size(48.dp)
+                        .background(Color.White.copy(alpha = 0.1f), CircleShape)) {
                         Icon(Icons.Default.Close, contentDescription = null)
                     }
                 }
@@ -674,14 +725,18 @@ fun TimerApp(
             ) {
                 item { Text("倒计时", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(bottom = 8.dp)) }
                 items(presets) { preset ->
-                    Button(onClick = { onStart(preset.second) }, modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+                    Button(onClick = { onStart(preset.second) }, modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 2.dp)) {
                         Text(preset.first)
                     }
                 }
                 item {
                     Button(
                         onClick = { onManualSettingChange(true) },
-                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp),
                         colors = ButtonDefaults.filledTonalButtonColors()
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -691,7 +746,9 @@ fun TimerApp(
                         }
                     }
                 }
-                item { Button(onClick = onBack, modifier = Modifier.padding(top = 8.dp).fillMaxWidth()) { Text("返回") } }
+                item { Button(onClick = onBack, modifier = Modifier
+                    .padding(top = 8.dp)
+                    .fillMaxWidth()) { Text("返回") } }
             }
         }
     }
@@ -717,7 +774,9 @@ fun ManualTimerPicker(onConfirm: (Long) -> Unit, onCancel: () -> Unit) {
     }
 
     Column(
-        modifier = Modifier.fillMaxSize().padding(12.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
@@ -730,7 +789,11 @@ fun ManualTimerPicker(onConfirm: (Long) -> Unit, onCancel: () -> Unit) {
             Picker(
                 state = hoursState,
                 contentDescription = { "时" },
-                modifier = Modifier.weight(1f).focusRequester(frHours).focusable().pointerInput(Unit) { detectTapGestures { focusedColumn = 0 } },
+                modifier = Modifier
+                    .weight(1f)
+                    .focusRequester(frHours)
+                    .focusable()
+                    .pointerInput(Unit) { detectTapGestures { focusedColumn = 0 } },
                 readOnly = focusedColumn != 0
             ) {
                 val isSelected = it == hoursState.selectedOptionIndex
@@ -743,7 +806,11 @@ fun ManualTimerPicker(onConfirm: (Long) -> Unit, onCancel: () -> Unit) {
             Picker(
                 state = minutesState,
                 contentDescription = { "分" },
-                modifier = Modifier.weight(1f).focusRequester(frMinutes).focusable().pointerInput(Unit) { detectTapGestures { focusedColumn = 1 } },
+                modifier = Modifier
+                    .weight(1f)
+                    .focusRequester(frMinutes)
+                    .focusable()
+                    .pointerInput(Unit) { detectTapGestures { focusedColumn = 1 } },
                 readOnly = focusedColumn != 1
             ) {
                 val isSelected = it == minutesState.selectedOptionIndex
@@ -756,7 +823,11 @@ fun ManualTimerPicker(onConfirm: (Long) -> Unit, onCancel: () -> Unit) {
             Picker(
                 state = secondsState,
                 contentDescription = { "秒" },
-                modifier = Modifier.weight(1f).focusRequester(frSeconds).focusable().pointerInput(Unit) { detectTapGestures { focusedColumn = 2 } },
+                modifier = Modifier
+                    .weight(1f)
+                    .focusRequester(frSeconds)
+                    .focusable()
+                    .pointerInput(Unit) { detectTapGestures { focusedColumn = 2 } },
                 readOnly = focusedColumn != 2
             ) {
                 val isSelected = it == secondsState.selectedOptionIndex
@@ -767,8 +838,12 @@ fun ManualTimerPicker(onConfirm: (Long) -> Unit, onCancel: () -> Unit) {
                 )
             }
         }
-        Row(modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
-            IconButton(onClick = onCancel, modifier = Modifier.size(42.dp).background(Color.Red.copy(alpha = 0.2f), CircleShape)) {
+        Row(modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 4.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+            IconButton(onClick = onCancel, modifier = Modifier
+                .size(42.dp)
+                .background(Color.Red.copy(alpha = 0.2f), CircleShape)) {
                 Icon(Icons.Default.Close, contentDescription = null, tint = Color.Red)
             }
             IconButton(
@@ -776,7 +851,9 @@ fun ManualTimerPicker(onConfirm: (Long) -> Unit, onCancel: () -> Unit) {
                     val total = (hoursState.selectedOptionIndex * 3600 + minutesState.selectedOptionIndex * 60 + secondsState.selectedOptionIndex) * 1000L
                     if (total > 0) onConfirm(total)
                 },
-                modifier = Modifier.size(42.dp).background(Color.Green.copy(alpha = 0.2f), CircleShape)
+                modifier = Modifier
+                    .size(42.dp)
+                    .background(Color.Green.copy(alpha = 0.2f), CircleShape)
             ) {
                 Icon(Icons.Default.Check, contentDescription = null, tint = Color.Green)
             }
@@ -797,7 +874,9 @@ fun AlarmApp(
 ) {
     val listState = rememberScalingLazyListState()
 
-    Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+    Box(modifier = Modifier
+        .fillMaxSize()
+        .background(Color.Black)) {
         if (isAdding) {
             ManualAlarmPicker(
                 onConfirm = { h, m -> onAdd(h, m); onAddingChange(false) },
@@ -813,11 +892,13 @@ fun AlarmApp(
                 items(alarms) { alarm ->
                     Button(
                         onClick = { onToggle(alarm) },
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 2.dp),
                         colors = if (alarm.isEnabled) ButtonDefaults.buttonColors() else ButtonDefaults.filledTonalButtonColors()
                     ) {
                         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text(String.format(Locale.getDefault(), "%02d:%02d", alarm.hour, alarm.minute), style = MaterialTheme.typography.titleMedium)
+                            Text(String.format(LocalLocale.current.platformLocale, "%02d:%02d", alarm.hour, alarm.minute), style = MaterialTheme.typography.titleMedium)
                             IconButton(onClick = { onDelete(alarm) }, modifier = Modifier.size(24.dp)) {
                                 Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
                             }
@@ -825,7 +906,9 @@ fun AlarmApp(
                     }
                 }
                 item {
-                    Button(onClick = { onAddingChange(true) }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                    Button(onClick = { onAddingChange(true) }, modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Default.Add, contentDescription = null)
                             Spacer(Modifier.width(8.dp))
@@ -833,7 +916,9 @@ fun AlarmApp(
                         }
                     }
                 }
-                item { Button(onClick = onBack, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) { Text("返回") } }
+                item { Button(onClick = onBack, modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp)) { Text("返回") } }
             }
         }
     }
@@ -849,21 +934,35 @@ fun ManualAlarmPicker(onConfirm: (Int, Int) -> Unit, onCancel: () -> Unit) {
 
     LaunchedEffect(focusedCol) { if (focusedCol == 0) frH.requestFocus() else frM.requestFocus() }
 
-    Column(modifier = Modifier.fillMaxSize().padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+    Column(modifier = Modifier
+        .fillMaxSize()
+        .padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         Text("设置时间", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
         Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-            Picker(state = hState, contentDescription = { "" }, modifier = Modifier.weight(1f).focusRequester(frH).focusable().pointerInput(Unit) { detectTapGestures { focusedCol = 0 } }, readOnly = focusedCol != 0) {
+            Picker(state = hState, contentDescription = { "" }, modifier = Modifier
+                .weight(1f)
+                .focusRequester(frH)
+                .focusable()
+                .pointerInput(Unit) { detectTapGestures { focusedCol = 0 } }, readOnly = focusedCol != 0) {
                 val isSelected = it == hState.selectedOptionIndex
                 Text("${it}时", style = if (isSelected) MaterialTheme.typography.titleLarge.copy(fontSize = 24.sp, color = Color.Cyan) else MaterialTheme.typography.titleMedium)
             }
-            Picker(state = mState, contentDescription = { "" }, modifier = Modifier.weight(1f).focusRequester(frM).focusable().pointerInput(Unit) { detectTapGestures { focusedCol = 1 } }, readOnly = focusedCol != 1) {
+            Picker(state = mState, contentDescription = { "" }, modifier = Modifier
+                .weight(1f)
+                .focusRequester(frM)
+                .focusable()
+                .pointerInput(Unit) { detectTapGestures { focusedCol = 1 } }, readOnly = focusedCol != 1) {
                 val isSelected = it == mState.selectedOptionIndex
                 Text("${it}分", style = if (isSelected) MaterialTheme.typography.titleLarge.copy(fontSize = 24.sp, color = Color.Cyan) else MaterialTheme.typography.titleMedium)
             }
         }
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-            IconButton(onClick = onCancel, modifier = Modifier.size(42.dp).background(Color.Red.copy(alpha = 0.2f), CircleShape)) { Icon(Icons.Default.Close, contentDescription = null, tint = Color.Red) }
-            IconButton(onClick = { onConfirm(hState.selectedOptionIndex, mState.selectedOptionIndex) }, modifier = Modifier.size(42.dp).background(Color.Green.copy(alpha = 0.2f), CircleShape)) { Icon(Icons.Default.Check, contentDescription = null, tint = Color.Green) }
+            IconButton(onClick = onCancel, modifier = Modifier
+                .size(42.dp)
+                .background(Color.Red.copy(alpha = 0.2f), CircleShape)) { Icon(Icons.Default.Close, contentDescription = null, tint = Color.Red) }
+            IconButton(onClick = { onConfirm(hState.selectedOptionIndex, mState.selectedOptionIndex) }, modifier = Modifier
+                .size(42.dp)
+                .background(Color.Green.copy(alpha = 0.2f), CircleShape)) { Icon(Icons.Default.Check, contentDescription = null, tint = Color.Green) }
         }
     }
 }
@@ -880,7 +979,9 @@ fun StopwatchApp(
     onBack: () -> Unit
 ) {
     val listState = rememberScalingLazyListState()
-    Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+    Box(modifier = Modifier
+        .fillMaxSize()
+        .background(Color.Black)) {
         Canvas(modifier = Modifier.fillMaxSize()) {
             val progress = (timeMillis % 60000) / 60000f
             drawArc(
@@ -899,22 +1000,36 @@ fun StopwatchApp(
         ) {
             item { Text(text = formatTime(timeMillis), style = MaterialTheme.typography.displayMedium.copy(fontSize = 36.sp), color = Color.White) }
             item {
-                Row(modifier = Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
-                    IconButton(onClick = onToggleRunning, modifier = Modifier.size(48.dp).background(if (isRunning) Color.Red.copy(alpha = 0.2f) else Color.Green.copy(alpha = 0.2f), CircleShape)) {
+                Row(modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 12.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+                    IconButton(onClick = onToggleRunning, modifier = Modifier
+                        .size(48.dp)
+                        .background(
+                            if (isRunning) Color.Red.copy(alpha = 0.2f) else Color.Green.copy(
+                                alpha = 0.2f
+                            ), CircleShape
+                        )) {
                         Icon(if (isRunning) Icons.Default.Pause else Icons.Default.PlayArrow, contentDescription = null, tint = if (isRunning) Color.Red else Color.Green)
                     }
-                    IconButton(onClick = { if (isRunning) onAddLap() else onReset() }, modifier = Modifier.size(48.dp).background(Color.Gray.copy(alpha = 0.2f), CircleShape)) {
+                    IconButton(onClick = { if (isRunning) onAddLap() else onReset() }, modifier = Modifier
+                        .size(48.dp)
+                        .background(Color.Gray.copy(alpha = 0.2f), CircleShape)) {
                         Icon(if (isRunning) Icons.Default.Flag else Icons.Default.Refresh, contentDescription = null)
                     }
                 }
             }
             itemsIndexed(laps) { index, lapTime ->
-                Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp, horizontal = 16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                Row(modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp, horizontal = 16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("计次 ${laps.size - index}", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
                     Text(formatTime(lapTime), style = MaterialTheme.typography.bodyMedium)
                 }
             }
-            item { Button(onClick = onBack, modifier = Modifier.padding(top = 12.dp).fillMaxWidth()) { Text("返回") } }
+            item { Button(onClick = onBack, modifier = Modifier
+                .padding(top = 12.dp)
+                .fillMaxWidth()) { Text("返回") } }
         }
     }
 }
@@ -926,11 +1041,15 @@ fun ExerciseApp(onBack: () -> Unit) {
     val exerciseList = remember { prefs.getStringSet("exercise_list", setOf("户外跑", "健走", "骑行"))?.toList()?.sorted() ?: emptyList() }
     var toastMessage by remember { mutableStateOf<String?>(null) }
     val listState = rememberScalingLazyListState()
-    Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+    Box(modifier = Modifier
+        .fillMaxSize()
+        .background(Color.Black)) {
         ScalingLazyColumn(modifier = Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(top = 36.dp, bottom = 32.dp, start = 12.dp, end = 12.dp), autoCentering = null) {
             item { Text("运动", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(bottom = 8.dp)) }
             items(exerciseList) { exercise ->
-                Button(onClick = { toastMessage = "传感器错误，请连接手机同步后重试" }, modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp), colors = ButtonDefaults.filledTonalButtonColors()) {
+                Button(onClick = { toastMessage = "传感器错误，请连接手机同步后重试" }, modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 2.dp), colors = ButtonDefaults.filledTonalButtonColors()) {
                     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.AutoMirrored.Filled.DirectionsRun, contentDescription = null, modifier = Modifier.size(20.dp))
                         Spacer(Modifier.width(12.dp))
@@ -939,7 +1058,9 @@ fun ExerciseApp(onBack: () -> Unit) {
                 }
             }
             item {
-                Button(onClick = { toastMessage = "请在手机上操作" }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp), colors = ButtonDefaults.buttonColors()) {
+                Button(onClick = { toastMessage = "请在手机上操作" }, modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp), colors = ButtonDefaults.buttonColors()) {
                     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(20.dp))
                         Spacer(Modifier.width(12.dp))
@@ -947,7 +1068,9 @@ fun ExerciseApp(onBack: () -> Unit) {
                         }
                     }
                 }
-            item { Button(onClick = onBack, modifier = Modifier.padding(top = 12.dp).fillMaxWidth(), colors = ButtonDefaults.filledTonalButtonColors()) { Text("返回") } }
+            item { Button(onClick = onBack, modifier = Modifier
+                .padding(top = 12.dp)
+                .fillMaxWidth(), colors = ButtonDefaults.filledTonalButtonColors()) { Text("返回") } }
         }
         CustomToast(message = toastMessage, onDismiss = { toastMessage = null })
     }
@@ -978,7 +1101,9 @@ fun HeartRateApp(isPowerSaveMode: Boolean, onBack: () -> Unit) {
         while (true) { heartRate = Random.nextInt(68, 88); delay(simulationDelay) }
     }
     val listState = rememberScalingLazyListState()
-    Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+    Box(modifier = Modifier
+        .fillMaxSize()
+        .background(Color.Black)) {
         ScalingLazyColumn(modifier = Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(top = 36.dp, bottom = 32.dp, start = 12.dp, end = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             item { Icon(imageVector = Icons.Default.Favorite, contentDescription = null, tint = Color(0xFFF44336), modifier = Modifier.size(40.dp)) }
             item {
@@ -989,11 +1114,15 @@ fun HeartRateApp(isPowerSaveMode: Boolean, onBack: () -> Unit) {
             }
             item {
                 Spacer(modifier = Modifier.height(16.dp))
-                Text(text = "心率检测速度", style = MaterialTheme.typography.labelMedium, color = Color.Gray, modifier = Modifier.fillMaxWidth().padding(start = 8.dp))
+                Text(text = "心率检测速度", style = MaterialTheme.typography.labelMedium, color = Color.Gray, modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 8.dp))
             }
             items(speeds) { speed ->
                 val isActuallyLocked = isPowerSaveMode && speed == "1分钟"
-                Button(onClick = { if (!isActuallyLocked) { selectedSpeed = speed; prefs.edit { putString("hr_speed", speed) } } }, modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp), colors = if (selectedSpeed == speed) ButtonDefaults.buttonColors() else ButtonDefaults.filledTonalButtonColors(), enabled = !isActuallyLocked) {
+                Button(onClick = { if (!isActuallyLocked) { selectedSpeed = speed; prefs.edit { putString("hr_speed", speed) } } }, modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 2.dp), colors = if (selectedSpeed == speed) ButtonDefaults.buttonColors() else ButtonDefaults.filledTonalButtonColors(), enabled = !isActuallyLocked) {
                     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Text(text = speed, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f), color = if (isActuallyLocked) Color.DarkGray else Color.Unspecified)
                         if (isActuallyLocked) { Icon(Icons.Default.Lock, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color.DarkGray) }
@@ -1001,7 +1130,9 @@ fun HeartRateApp(isPowerSaveMode: Boolean, onBack: () -> Unit) {
                     }
                 }
             }
-            item { Button(onClick = onBack, modifier = Modifier.padding(top = 12.dp).fillMaxWidth()) { Text("返回") } }
+            item { Button(onClick = onBack, modifier = Modifier
+                .padding(top = 12.dp)
+                .fillMaxWidth()) { Text("返回") } }
         }
     }
 }
@@ -1018,7 +1149,9 @@ fun SettingsApp(
     onFakePowerOff: () -> Unit,
     onFakeRestart: () -> Unit
 ) {
-    Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+    Box(modifier = Modifier
+        .fillMaxSize()
+        .background(Color.Black)) {
         when (currentScreen) {
             SettingsDestination.MENU -> SettingsMenuPage(onNavigate, onBack)
             SettingsDestination.DISPLAY -> DisplaySettingsPage(brightness, onBrightnessChange, onBack)
@@ -1042,13 +1175,17 @@ fun SettingsMenuPage(onNavigate: (SettingsDestination) -> Unit, onBack: () -> Un
         item { SettingsItem(Icons.Default.BatteryFull, "电池") { onNavigate(SettingsDestination.BATTERY) } }
         item { SettingsItem(Icons.Default.Watch, "关于手表") { onNavigate(SettingsDestination.ABOUT) } }
         item { SettingsItem(Icons.Default.PowerSettingsNew, "系统操作") { onNavigate(SettingsDestination.SYSTEM_OPS) } }
-        item { Button(onClick = onBack, modifier = Modifier.padding(top = 8.dp).fillMaxWidth(), colors = ButtonDefaults.filledTonalButtonColors()) { Text("退出设置") } }
+        item { Button(onClick = onBack, modifier = Modifier
+            .padding(top = 8.dp)
+            .fillMaxWidth(), colors = ButtonDefaults.filledTonalButtonColors()) { Text("退出设置") } }
     }
 }
 
 @Composable
 fun SettingsItem(icon: ImageVector, title: String, onClick: () -> Unit) {
-    Button(onClick = onClick, modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp) ) {
+    Button(onClick = onClick, modifier = Modifier
+        .fillMaxWidth()
+        .padding(vertical = 2.dp) ) {
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Icon(icon, contentDescription = null, modifier = Modifier.size(20.dp))
             Spacer(Modifier.width(12.dp))
@@ -1063,7 +1200,9 @@ fun DisplaySettingsPage(brightness: Float, onBrightnessChange: (Float) -> Unit, 
     ScalingLazyColumn(modifier = Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(top = 36.dp, bottom = 32.dp, start = 12.dp, end = 12.dp)) {
         item { Text("显示与亮度", style = MaterialTheme.typography.titleSmall, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()) }
         item {
-            Column(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+            Column(modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 8.dp)) {
                 Text("亮度: ${brightness.toInt()}", style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(start = 8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
                     Slider(value = brightness, onValueChange = onBrightnessChange, valueRange = 0f..10f, steps = 9, modifier = Modifier.fillMaxWidth())
@@ -1071,7 +1210,9 @@ fun DisplaySettingsPage(brightness: Float, onBrightnessChange: (Float) -> Unit, 
             }
         }
         item {
-            Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp, start = 8.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 8.dp, start = 8.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text("息屏显示", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
                     Text("开启后续航时间变短", style = MaterialTheme.typography.labelSmall, color = Color.DarkGray)
@@ -1079,7 +1220,9 @@ fun DisplaySettingsPage(brightness: Float, onBrightnessChange: (Float) -> Unit, 
                 Icon(imageVector = Icons.Default.ToggleOff, contentDescription = null, tint = Color.DarkGray)
             }
         }
-        item { Button(onClick = onBack, modifier = Modifier.padding(top = 12.dp).fillMaxWidth()) { Text("返回") } }
+        item { Button(onClick = onBack, modifier = Modifier
+            .padding(top = 12.dp)
+            .fillMaxWidth()) { Text("返回") } }
     }
 }
 
@@ -1095,7 +1238,9 @@ fun BatterySettingsPage(isPowerSaveMode: Boolean, onPowerSaveModeChange: (Boolea
     ScalingLazyColumn(modifier = Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(top = 36.dp, bottom = 32.dp, start = 12.dp, end = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         item { Text("电池", style = MaterialTheme.typography.titleSmall) }
         item {
-            Box(contentAlignment = Alignment.Center, modifier = Modifier.size(100.dp).padding(10.dp)) {
+            Box(contentAlignment = Alignment.Center, modifier = Modifier
+                .size(100.dp)
+                .padding(10.dp)) {
                 Canvas(modifier = Modifier.fillMaxSize()) {
                     drawArc(color = Color.DarkGray, startAngle = 0f, sweepAngle = 360f, useCenter = false, style = Stroke(width = 8.dp.toPx(), cap = StrokeCap.Round))
                     drawArc(color = if (batteryLevel > 20) Color(0xFF4CAF50) else Color(0xFFF44336), startAngle = -90f, sweepAngle = (batteryLevel / 100f) * 360f, useCenter = false, style = Stroke(width = 8.dp.toPx(), cap = StrokeCap.Round))
@@ -1107,13 +1252,18 @@ fun BatterySettingsPage(isPowerSaveMode: Boolean, onPowerSaveModeChange: (Boolea
             }
         }
         item {
-            Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp, start = 8.dp, end = 8.dp).clickable { onPowerSaveModeChange(!isPowerSaveMode) }, verticalAlignment = Alignment.CenterVertically) {
+            Row(modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 8.dp, start = 8.dp, end = 8.dp)
+                .clickable { onPowerSaveModeChange(!isPowerSaveMode) }, verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) { Text("省电模式", style = MaterialTheme.typography.bodyMedium) }
                 Icon(imageVector = if (isPowerSaveMode) Icons.Default.ToggleOn else Icons.Default.ToggleOff, contentDescription = null, tint = if (isPowerSaveMode) Color(0xFF4CAF50) else Color.DarkGray, modifier = Modifier.size(32.dp))
             }
         }
         item { Text(text = "开启省电模式后，将限制心率检测速度至每五分钟检测。", style = MaterialTheme.typography.labelSmall, color = Color.Gray, textAlign = TextAlign.Start, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) }
-        item { Button(onClick = onBack, modifier = Modifier.padding(top = 12.dp).fillMaxWidth()) { Text("返回") } }
+        item { Button(onClick = onBack, modifier = Modifier
+            .padding(top = 12.dp)
+            .fillMaxWidth()) { Text("返回") } }
     }
 }
 
@@ -1131,16 +1281,23 @@ fun AboutWatchPage(onBack: () -> Unit) {
         item { AboutInfoRow("设备型号", deviceModel) }
         item { AboutInfoRow("序列号", serialNumber) }
         item { AboutInfoRow("法律信息", "点击查看") }
-        item { Button(onClick = onBack, modifier = Modifier.padding(top = 12.dp).fillMaxWidth()) { Text("返回") } }
+        item { Button(onClick = onBack, modifier = Modifier
+            .padding(top = 12.dp)
+            .fillMaxWidth()) { Text("返回") } }
     }
 }
 
 @Composable
 fun AboutInfoRow(label: String, value: String) {
-    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+    Column(modifier = Modifier
+        .fillMaxWidth()
+        .padding(vertical = 4.dp)) {
         Text(label, style = MaterialTheme.typography.labelSmall, color = Color.Gray)
         Text(value, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
-        Spacer(modifier = Modifier.height(1.dp).fillMaxWidth().background(Color.DarkGray.copy(alpha = 0.5f)))
+        Spacer(modifier = Modifier
+            .height(1.dp)
+            .fillMaxWidth()
+            .background(Color.DarkGray.copy(alpha = 0.5f)))
     }
 }
 
@@ -1152,7 +1309,9 @@ fun SystemOpsPage(onPowerOff: () -> Unit, onRestart: () -> Unit, onBack: () -> U
         item { 
             Button(
                 onClick = onPowerOff, 
-                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 2.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Color.Red.copy(alpha = 0.5f))
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1165,7 +1324,9 @@ fun SystemOpsPage(onPowerOff: () -> Unit, onRestart: () -> Unit, onBack: () -> U
         item { 
             Button(
                 onClick = onRestart, 
-                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 2.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -1174,7 +1335,9 @@ fun SystemOpsPage(onPowerOff: () -> Unit, onRestart: () -> Unit, onBack: () -> U
                 }
             } 
         }
-        item { Button(onClick = onBack, modifier = Modifier.padding(top = 12.dp).fillMaxWidth()) { Text("返回") } }
+        item { Button(onClick = onBack, modifier = Modifier
+            .padding(top = 12.dp)
+            .fillMaxWidth()) { Text("返回") } }
     }
 }
 
@@ -1182,7 +1345,7 @@ fun SystemOpsPage(onPowerOff: () -> Unit, onRestart: () -> Unit, onBack: () -> U
 fun WatchFaceFloatingPage(onClose: () -> Unit, customBgPath: String?, textColor: Color, isStopwatchRunning: Boolean, stopwatchTime: Long, isTimerRunning: Boolean, timerTime: Long, onIslandClick: () -> Unit) {
     var currentTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) { while (true) { currentTime = System.currentTimeMillis(); delay(1000) } }
-    val timeFormat = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
+    val timeFormat = SimpleDateFormat("HH:mm:ss", LocalLocale.current.platformLocale)
 
     var clickCount by remember { mutableIntStateOf(0) }
     var windowStartTime by remember { mutableLongStateOf(0L) }
@@ -1196,7 +1359,11 @@ fun WatchFaceFloatingPage(onClose: () -> Unit, customBgPath: String?, textColor:
         }
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             AnimatedVisibility(visible = isStopwatchRunning || isTimerRunning, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) {
-                Row(modifier = Modifier.padding(bottom = 8.dp).background(Color.Black.copy(alpha = 0.7f), CircleShape).clickable { onIslandClick() }.padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(modifier = Modifier
+                    .padding(bottom = 8.dp)
+                    .background(Color.Black.copy(alpha = 0.7f), CircleShape)
+                    .clickable { onIslandClick() }
+                    .padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(if (isTimerRunning) Icons.Default.HourglassTop else Icons.Default.Timer, contentDescription = null, tint = if (isTimerRunning) Color(0xFFFB8C00) else Color(0xFF4CAF50), modifier = Modifier.size(14.dp))
                     Spacer(Modifier.width(6.dp))
                     Text(text = if (isTimerRunning) formatTime(timerTime, false) else formatTime(stopwatchTime), style = MaterialTheme.typography.labelSmall, color = Color.White)
@@ -1242,7 +1409,9 @@ fun ControlCenterFloatingPage(brightness: Float, onBrightnessChange: (Float) -> 
         item { Text("控制中心", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(bottom = 8.dp), color = textColor) }
         item { Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) { FloatingToggleItem(Icons.Default.BatteryChargingFull, "省电"); FloatingToggleItem(Icons.Default.Bluetooth, "蓝牙") } }
         item { Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) { FloatingToggleItem(Icons.Default.DoNotDisturbOn, "勿扰"); FloatingToggleItem(Icons.Default.AirplanemodeActive, "飞行") } }
-        item { Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceEvenly) { IconButton(onClick = { if (brightness > 0) onBrightnessChange(brightness - 1) }) { Icon(Icons.Default.Remove, contentDescription = null, tint = textColor) }
+        item { Row(modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceEvenly) { IconButton(onClick = { if (brightness > 0) onBrightnessChange(brightness - 1) }) { Icon(Icons.Default.Remove, contentDescription = null, tint = textColor) }
                 Text(text = "亮度: ${brightness.toInt()}", style = MaterialTheme.typography.labelMedium, color = textColor)
                 IconButton(onClick = { if (brightness < 10) onBrightnessChange(brightness + 1) }) { Icon(Icons.Default.Add, contentDescription = null, tint = textColor) } } }
     }
@@ -1261,7 +1430,9 @@ fun AppDrawerFloatingPage(onAppClick: (AppDestination) -> Unit) {
     )
     ScalingLazyColumn(modifier = Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(top = 36.dp, bottom = 32.dp, start = 12.dp, end = 12.dp), autoCentering = null) {
         items(apps) { item -> val (appInfo, dest) = item
-            Button(onClick = { if (dest != AppDestination.NONE) onAppClick(dest) }, modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) { Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Icon(appInfo.second, contentDescription = null); Spacer(Modifier.width(12.dp)); Text(appInfo.first) } } }
+            Button(onClick = { if (dest != AppDestination.NONE) onAppClick(dest) }, modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 2.dp)) { Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Icon(appInfo.second, contentDescription = null); Spacer(Modifier.width(12.dp)); Text(appInfo.first) } } }
     }
 }
 
@@ -1276,7 +1447,10 @@ fun CustomToast(message: String?, onDismiss: () -> Unit) {
     LaunchedEffect(message) { if (message != null) { delay(2000); onDismiss() } }
     AnimatedVisibility(visible = message != null, enter = fadeIn() + scaleIn(), exit = fadeOut() + scaleOut()) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Box(modifier = Modifier.padding(horizontal = 24.dp).background(Color.DarkGray.copy(alpha = 0.9f), CircleShape).padding(horizontal = 16.dp, vertical = 10.dp)) {
+            Box(modifier = Modifier
+                .padding(horizontal = 24.dp)
+                .background(Color.DarkGray.copy(alpha = 0.9f), CircleShape)
+                .padding(horizontal = 16.dp, vertical = 10.dp)) {
                 Text(text = message ?: "", style = MaterialTheme.typography.labelMedium, color = Color.White, textAlign = TextAlign.Center)
             }
         }
