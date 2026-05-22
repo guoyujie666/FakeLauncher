@@ -9,7 +9,7 @@
     <!-- 添加存储/媒体权限 -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
-
+    <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
@@ -42,7 +42,7 @@
             android:value="true" />
 
         <activity
-            android:name="com.github.guoyujie666.fakelauncher.presentation.MainActivity"
+            android:name="com.guoyujie666.fakelauncher.presentation.MainActivity"
             android:exported="true"
             android:taskAffinity=""
             android:theme="@style/MainActivityTheme.Starting">
@@ -54,9 +54,15 @@
         </activity>
 
         <service
-            android:name="com.github.guoyujie666.fakelauncher.service.FloatingService"
+            android:name="com.guoyujie666.fakelauncher.service.FloatingService"
             android:enabled="true"
             android:exported="false" />
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:exported="true"
+            android:multiprocess="false"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
     </application>
 
 </manifest>

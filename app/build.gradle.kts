@@ -5,16 +5,18 @@ plugins {
 }
 
 android {
-    namespace = "com.github.guoyujie666.fakelauncher"
+    namespace = "com.guoyujie666.fakelauncher"
     compileSdk = 35
     buildFeatures {
         compose = true
+        aidl = true        // 启用 AIDL
+        buildConfig = true // 生成 BuildConfig
     }
     defaultConfig {
-        applicationId = "com.github.guoyujie666.fakelauncher"
+        applicationId = "com.guoyujie666.fakelauncher"
         minSdk = 28
         targetSdk = 34
-        versionCode = 26030707
+        versionCode = 26052305
         versionName = "v1.2.0"
     }
 
@@ -41,10 +43,13 @@ android {
 
 dependencies {
     // Wear OS Material 3
+    implementation("dev.rikka.shizuku:api:13.1.5")
+    implementation("dev.rikka.shizuku:provider:13.1.5")
     implementation("androidx.palette:palette-ktx:1.0.0")
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("androidx.wear.compose:compose-material3:1.5.6")
     implementation("androidx.wear.compose:compose-foundation:1.5.6")
+    implementation("androidx.wear:wear-input:1.0.0")
 
     // Icons
     implementation("androidx.compose.material:material-icons-extended-android:1.7.8")
